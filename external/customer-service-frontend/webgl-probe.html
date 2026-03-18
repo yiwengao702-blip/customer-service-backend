@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>probe</title></head>
+<body>INIT</body>
+<script>
+// 在 document.title 输出结果，便于命令行读取
+var out = [];
+function tag(t){ document.title = 'RESULT:' + out.join('|'); }
+
+// 1. 安全上下文
+out.push('secure=' + window.isSecureContext);
+
+// 2. SDK 同款 WebGL2 严格校验
+var caveat = 'null';
+try {
+  var c = document.createElement('canvas');
+  var gl = c.getContext('webgl2', { failIfMajorPerformanceCaveat: true });
+  caveat = gl ? 'OK' : 'null';
+  if (gl) {
+    try {
+      var d = gl.getExtension('WEBGL_debug_renderer_info');
+      out.push('renderer=' + String(gl.getParameter(d ? d.UNMASKED_RENDERER_WEBGL : gl.RENDERER)).replace(/\s+/g,'_').slice(0,40));
+    } catch(e) {}
+  }
+} catch (e) { caveat = 'throw:' + e.message; }
+out.push('caveatWebGL2=' + caveat);
+
+// 3. 不严格校验（对照）
+var plain = 'null';
+try { plain = document.createElement('canvas').getContext('webgl2') ? 'OK' : 'null'; } catch(e){ plain='throw'; }
+out.push('plainWebGL2=' + plain);
+
+// 4. 音频 / WebCodecs / Worker
+var hasAC = typeof window.AudioContext !== 'undefined' || typeof window.webkitAudioContext !== 'undefined';
+var hasAW = typeof window.AudioWorkletNode !== 'undefined';
+var hasMS = typeof window.MediaSource !== 'undefined';
+out.push('audio=' + (((hasAC && hasAW) || hasMS) ? 'OK' : 'NO'));
+out.push('webcodecs=' + (typeof window.VideoDecoder !== 'undefined' ? 'OK' : 'NO'));
+out.push('worker=' + (typeof Worker !== 'undefined' ? 'OK' : 'NO'));
+
+tag();
+document.body.innerText = document.title;
+</script>
+</html>

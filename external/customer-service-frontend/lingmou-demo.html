@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>灵眸云渲染数字人 · 演示页</title>
+  <style>
+    body { margin:0; background:#05070f; color:#e6e9ef;
+           font-family:"Microsoft YaHei",system-ui,sans-serif; display:flex; flex-direction:column; }
+    header { padding:14px 20px; border-bottom:1px solid #223;
+             display:flex; align-items:center; justify-content:space-between; }
+    h1 { font-size:18px; margin:0; }
+    .hint { font-size:12px; color:#8b93a7; }
+    main { flex:1; display:flex; gap:16px; padding:16px; }
+    #video { flex:1; background:#000; border:1px solid #223; border-radius:10px; min-height:420px; }
+    aside { width:340px; display:flex; flex-direction:column; gap:10px; }
+    button { padding:10px 14px; border:1px solid #2b6; background:#0f2a26; color:#7ee;
+             border-radius:8px; cursor:pointer; font-size:14px; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    input,textarea { padding:9px; background:#0d1220; border:1px solid #223; color:#e6e9ef;
+                     border-radius:8px; font-size:13px; font-family:inherit; }
+    #log { flex:1; overflow:auto; background:#0a0e18; border:1px solid #223; border-radius:8px;
+           padding:10px; font-size:12px; line-height:1.7; }
+    .err { color:#ff8080; }
+    .ok { color:#7ee; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>灵眸云渲染数字人 · 演示页</h1>
+    <div class="hint">云渲染走阿里云 RTC 推流，<b>不依赖本机 WebGL / 显卡</b></div>
+  </header>
+  <main>
+    <video id="video" autoplay playsinline></video>
+    <aside>
+      <button id="btn">连接数字人</button>
+      <button id="speak" disabled>让数字人说一句话</button>
+      <textarea id="say" rows="2">您好，我是电商小二，很高兴为您服务。</textarea>
+      <div id="log"></div>
+    </aside>
+  </main>
+
+<script type="module">
+  const logEl = document.getElementById('log')
+  const btn = document.getElementById('btn')
+  const speakBtn = document.getElementById('speak')
+  const sayEl = document.getElementById('say')
+  let avatar = null
+
+  function log(msg, cls = '') {
+    const d = document.createElement('div')
+    if (cls) d.className = cls
+    d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`
+    logEl.appendChild(d)
+    logEl.scrollTop = logEl.scrollHeight
+  }
+
+  btn.addEventListener('click', async () => {
+    if (avatar) { log('已连接，忽略重复点击'); return }
+    btn.disabled = true
+    log('正在向后端请求云渲染会话 ...')
+    try {
+      const resp = await fetch('/api/avatar/session')
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}))
+        throw new Error(err.detail || `HTTP ${resp.status}`)
+      }
+      const session = await resp.json()
+      log(`会话已创建 sessionId=${session.sessionId}`, 'ok')
+
+      const LM = await import('lm-avatar-chat-sdk')
+      log(`SDK 已加载，导出: ${Object.keys(LM).slice(0, 6).join(',')} ...`)
+
+      avatar = LM.createAvatar(LM.TYAvatarType.cloudAvatar, {
+        ...session.rtcParams,
+        rootContainer: '#video',
+        sessionId: session.sessionId,
+      })
+
+      avatar.onFirstFrameReceived(() => { log('首帧到达，数字人已出现 ✅', 'ok'); speakBtn.disabled = false })
+      avatar.onReadyToSpeech(() => log('已就绪，可以语音交互'))
+      avatar.onErrorReceived((e) => log(`灵眸错误 code=${e?.code} ${e?.message}`, 'err'))
+
+      avatar.start({ mode: LM.TYVoiceChatMode.tap2talk })
+      log('已调用 avatar.start({ mode: tap2talk })')
+    } catch (e) {
+      log('连接失败: ' + (e.message || e), 'err')
+      btn.disabled = false
+    }
+  })
+
+  speakBtn.addEventListener('click', () => {
+    if (!avatar?.requestToRespond) { log('SDK 无 requestToRespond 方法', 'err'); return }
+    avatar.requestToRespond('transcript', sayEl.value)
+    log('已发送 transcript: ' + sayEl.value)
+  })
+</script>
+</body>
+</html>

@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>WebGL2 诊断 · 魔珐星云 10005</title>
+<style>
+  body { margin:0; background:#05070f; color:#e6e9ef; font-family:"Microsoft YaHei",system-ui,sans-serif; padding:24px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:#8b93a7; font-size:13px; margin-bottom:18px; }
+  .card { background:#0d1220; border:1px solid #223; border-radius:10px; padding:14px 16px; margin-bottom:12px; }
+  .row { display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid #1a2030; font-size:14px; }
+  .row:last-child { border-bottom:none; }
+  .tag { font-size:12px; padding:2px 8px; border-radius:20px; font-weight:700; }
+  .pass { background:#0f3d2e; color:#5ee7a0; }
+  .fail { background:#4a1414; color:#ff8b8b; }
+  .warn { background:#4a3a10; color:#ffd166; }
+  code { background:#151b2b; padding:2px 6px; border-radius:4px; font-size:12px; color:#9ecbff; }
+  .fix { margin-top:10px; padding:10px; background:#101a2e; border-left:3px solid #4a8; border-radius:6px; font-size:13px; line-height:1.8; }
+  .fix b { color:#7ee; }
+  a { color:#7ee; }
+</style>
+</head>
+<body>
+<h1>WebGL2 环境诊断</h1>
+<div class="sub">用于定位魔珐星云 SDK 报 <code>10005 (INIT_ERROR)</code> 的真正原因</div>
+<div id="out"></div>
+
+<script>
+const out = document.getElementById('out')
+function card(title, tagCls, tagText, rows, fixHtml) {
+  let h = `<div class="card"><div class="row"><b>${title}</b><span class="tag ${tagCls}">${tagText}</span></div>`
+  rows.forEach(r => { h += `<div class="row"><span>${r[0]}</span><span>${r[1]}</span></div>` })
+  if (fixHtml) h += `<div class="fix">${fixHtml}</div>`
+  return h + '</div>'
+}
+
+const rows = []
+let needFix = false
+
+// 本机实测配置（2026-10-07 采集），用于对照
+rows.push(['本机实测配置', '<code>Chrome 153 · AMD驱动2026-05 · NVIDIA驱动2022-10 · 显示挂在AMD核显 · ToDesk虚拟显卡活动中</code>'])
+rows.push(['浏览器版本', `<code>${navigator.userAgent.replace(/^.*Chrome\/([\d.]+).*$/, 'Chrome $1')}</code>`])
+
+// 1. 安全上下文
+const secOk = window.isSecureContext
+rows.push(['安全上下文 (isSecureContext)', secOk
+  ? '<span class="tag pass">通过</span>'
+  : '<span class="tag fail">不通过</span>'])
+if (!secOk) needFix = true
+rows.push(['当前访问地址', location.href])
+
+// 2. 关键：SDK 同款 WebGL2 校验
+let caveatOk = false, caveatRenderer = '—'
+try {
+  const c = document.createElement('canvas')
+  const gl = c.getContext('webgl2', { failIfMajorPerformanceCaveat: true })
+  if (gl) {
+    caveatOk = true
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info')
+    caveatRenderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)
+  }
+} catch (e) { caveatRenderer = '异常: ' + e.message }
+rows.push(['WebGL2（SDK 同款严格校验）', caveatOk
+  ? '<span class="tag pass">通过</span>'
+  : '<span class="tag fail">不通过</span>'])
+if (!caveatOk) needFix = true
+rows.push(['实际渲染器', `<code>${String(caveatRenderer).slice(0,60)}</code>`])
+
+// 3. 对照：不带严格校验（软件渲染能过说明有 GPU 但被性能审查拦下）
+let plainOk = false
+try { plainOk = !!document.createElement('canvas').getContext('webgl2') } catch (e) {}
+rows.push(['WebGL2（不严格校验，对照）', plainOk
+  ? '<span class="tag pass">通过</span>'
+  : '<span class="tag fail">不通过</span>'])
+if (plainOk && !caveatOk) rows.push(['<b>结论</b>', '<span class="tag warn">有 WebGL2 但被性能审查判定为软渲染</span>'])
+
+// 4. WebGL1 / 硬件并发数（辅助判断）
+let cores = navigator.hardwareConcurrency || '未知'
+rows.push(['CPU 逻辑核心数', cores])
+
+// 4.5 SDK 还有 3 项 fatal 校验：音频 / WebCodecs / Worker
+//     （源码函数：checkAudioSystemSync / checkWebCodecsSync / checkWorkerSync）
+const hasAudioCtx = typeof window.AudioContext !== 'undefined' || typeof window.webkitAudioContext !== 'undefined'
+const hasWorklet = typeof window.AudioWorkletNode !== 'undefined'
+const hasMediaSource = typeof window.MediaSource !== 'undefined'
+const audioOk = (hasAudioCtx && hasWorklet) || hasMediaSource
+const hasVideoDecoder = typeof window.VideoDecoder !== 'undefined'
+let workerOk = typeof Worker !== 'undefined'
+try { new Worker(URL.createObjectURL(new Blob([''], { type: 'application/javascript' }))) } catch (e) { workerOk = false }
+
+rows.push(['音频能力 (AudioContext+AudioWorklet / MediaSource)', audioOk
+  ? '<span class="tag pass">通过</span>'
+  : '<span class="tag fail">不通过</span>'])
+if (!audioOk) needFix = true
+rows.push(['WebCodecs (VideoDecoder)', hasVideoDecoder
+  ? '<span class="tag pass">通过</span>'
+  : '<span class="tag fail">缺失（需 Chrome 94+）</span>'])
+if (!hasVideoDecoder) needFix = true
+rows.push(['Web Worker', workerOk
+  ? '<span class="tag pass">通过</span>'
+  : '<span class="tag fail">不可用</span>'])
+if (!workerOk) needFix = true
+
+// 5. 当前 ANGLE / 图形后端（判断 Chrome 实际走了哪条渲染路径）
+try {
+  const c = document.createElement('canvas')
+  const gl = c.getContext('webgl2') || c.getContext('webgl')
+  if (gl) {
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info')
+    const rend = String(gl.getParameter(gl.RENDERER))
+    rows.push(['图形后端 (GL_RENDERER)', `<code>${rend.slice(0,60)}</code>`])
+    if (dbg) rows.push(['GPU 厂商', `<code>${String(gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL)).slice(0,40)}</code>`])
+    // 判读：软件渲染器通常含 SwiftShader / llvmpipe / Software
+    const soft = /swiftshader|llvmpipe|software|basic render/i.test(rend)
+    rows.push(['渲染类型判定', soft
+      ? '<span class="tag fail">软件渲染</span>'
+      : '<span class="tag pass">硬件渲染</span>'])
+  }
+} catch (e) {}
+
+let html = ''
+html += card('安全上下文检查', secOk ? 'pass' : 'fail', secOk ? '通过' : '不通过', rows,
+  secOk ? '' : '请改用 <b>http://127.0.0.1:5173</b> 或 <b>http://localhost:5173</b> 访问，不要用局域网 IP。')
+
+html += card('WebGL2 严格校验（魔珐 SDK 实际使用的判定）',
+  caveatOk ? 'pass' : 'fail', caveatOk ? '通过' : '不通过',
+  [['判定标准', 'getContext("webgl2", {failIfMajorPerformanceCaveat: true})'],
+   ['结果', caveatOk ? '取得真实 GPU 上下文' : '返回 null → SDK 判定 fatal']],
+  caveatOk ? '' : '请尝试：<br>' +
+    '① <b>更新显卡驱动</b>（根治，见下方结论卡的下载链接）；<br>' +
+    '② 关闭 <b>ToDesk</b> 后在本机浏览器直接打开（虚拟显卡是次要嫌疑）；<br>' +
+    '③ 双击项目根目录 <b>start-avatar-gpu.bat</b>（强制 Chrome 接受被拉黑的驱动）；<br>' +
+    '④ 若以上都不行，改走 <a href="/lingmou-demo.html">灵眸云渲染</a>（不依赖显卡）。')
+
+if (needFix) {
+  html += card('总体结论', 'fail', '环境不满足，SDK 会报 10005',
+    [['<b>已实测确认的根因</b>', 'NVIDIA 驱动 2022-10 未更新 + 显示输出挂在 AMD 核显 + ToDesk 虚拟显卡活动'],
+     ['<b>方案 A（推荐，不用改驱动）</b>', '用 <b>Firefox</b> + 关闭 failIfMajorPerformanceCaveat → 见下方说明'],
+     ['方案 B（根治，性能最好）', '<b>更新 NVIDIA 驱动</b>，含 "NVIDIA Platform Controllers and Framework"（2022-06），然后退出 ToDesk 本机运行'],
+     ['方案 C（临时）', '双击 <b>start-avatar-gpu.bat</b>（强制忽略驱动黑名单，需先关掉所有 Chrome 窗口）'],
+     ['方案 D（完全不依赖显卡）', '阿里灵眸云渲染 → <a href="/lingmou-demo.html">lingmou-demo.html</a>']],
+    '<b>方案 A 详细步骤（不用更新驱动，推荐先试）：</b><br>' +
+    '1) 安装 Firefox：<code>winget install --id Mozilla.Firefox -e</code><br>' +
+    '2) 打开 <code>about:config</code>，接受风险提示<br>' +
+    '3) 搜索 <code>webgl.disable-fail-if-major-performance-caveat</code>，改为 <b>true</b><br>' +
+    '4) 重启 Firefox，打开 <code>http://127.0.0.1:5173</code> 点「连接数字人」<br>' +
+    '<span style="color:#ffd166">原理：Firefox 提供该开关，可直接关闭 SDK 那道 WebGL2 性能审查，软渲染也能通过（帧率偏低但能出画面）。Chrome 无此开关。</span>')
+} else {
+  html += card('总体结论', 'pass', '环境满足',
+    [['下一步', '回到系统页面点击「连接数字人」即可正常显示']],
+    '若仍失败，请把 F12 控制台里 <code>[数字人]</code> 开头的日志发给我。')
+}
+
+out.innerHTML = html
+</script>
+</body>
+</html>

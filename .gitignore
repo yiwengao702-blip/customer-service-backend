@@ -1,0 +1,24 @@
+# 环境变量 / 密钥（含 LLM Key、数字人 AppSecret / AccessKey 等敏感凭证）
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 运行时日志
+*.log
+mock_server.log
+server.log
+
+# 前端构建产物
+node_modules/
+dist/
+
+# 编辑器 / 系统
+.DS_Store
+.idea/
+.vscode/
+
+# 工具内部状态 / 记忆（非源码，含本地用户画像与项目日志）
+.workbuddy/

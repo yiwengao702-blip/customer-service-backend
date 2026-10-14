@@ -216,11 +216,13 @@ const commerceProductsEndpoint = computed(
   () => `/commerce/users/${encodeURIComponent(senderId.value.trim())}/products`
 )
 
-function createBaseMessage(role) {
+function createBaseMessage(role, timestamp = Date.now()) {
   return {
     id: crypto.randomUUID(),
     role,
     buttons: [],
+    // 用于聊天区按时间展示；若后端历史消息带时间则沿用，否则取落库时刻
+    timestamp,
   }
 }
 
@@ -252,7 +254,7 @@ function appendBotMessages(botMessages) {
 function appendMessage(role, message) {
   if (role === 'divider') {
     messages.value.push({
-      ...createBaseMessage('divider'),
+      ...createBaseMessage('divider', message.timestamp),
       type: 'divider',
       text: message.text ?? '以上为历史消息',
     })
@@ -261,14 +263,14 @@ function appendMessage(role, message) {
 
   if (message.object) {
     messages.value.push({
-      ...createBaseMessage(role),
+      ...createBaseMessage(role, message.timestamp),
       type: 'object',
       objectType: message.object.type,
       payload: message.object,
     })
   } else {
     messages.value.push({
-      ...createBaseMessage(role),
+      ...createBaseMessage(role, message.timestamp),
       type: 'text',
       text: message.text ?? '',
       suggestions: message.suggestions ?? null,
@@ -299,6 +301,15 @@ watch(
     await scrollToBottom()
   }
 )
+
+// 把消息时间戳格式化为 HH:MM（当天）；用于聊天区每条消息的轻量时间标签
+function formatTime(ts) {
+  if (!ts) return ''
+  const d = new Date(ts)
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mm = String(d.getMinutes()).padStart(2, '0')
+  return `${hh}:${mm}`
+}
 
 function resetConversation() {
   messages.value = []
@@ -1255,10 +1266,11 @@ window.addEventListener('pagehide', destroyDigitalHuman)
                   <div class="avatar-wrapper user-avatar">
                     <img :src="userProfile.avatar" class="avatar" />
                   </div>
-                  <div class="agent-info">
-                    <span class="agent-name">{{ userProfile.name }}</span>
-                    <span class="agent-label">用户</span>
-                  </div>
+                <div class="agent-info">
+                  <span class="agent-name">{{ userProfile.name }}</span>
+                  <span class="agent-label">用户</span>
+                  <span class="msg-time">{{ formatTime(item.userMessage.timestamp) }}</span>
+                </div>
                 </div>
                 <div class="turn-bubble user-bubble">
                   <template v-if="item.userMessage.type === 'object'">
@@ -1295,10 +1307,11 @@ window.addEventListener('pagehide', destroyDigitalHuman)
                     <img :src="customerService.avatar" class="avatar" />
                     <span class="status-dot"></span>
                   </div>
-                  <div class="agent-info">
-                    <span class="agent-name">{{ customerService.name }}</span>
-                    <span class="agent-label">{{ customerService.title }}</span>
-                  </div>
+                <div class="agent-info">
+                  <span class="agent-name">{{ customerService.name }}</span>
+                  <span class="agent-label">{{ customerService.title }}</span>
+                  <span class="msg-time">{{ formatTime(item.botMessages[0]?.timestamp) }}</span>
+                </div>
                 </div>
                 <div class="bot-messages">
                   <div
@@ -2065,6 +2078,14 @@ window.addEventListener('pagehide', destroyDigitalHuman)
   font-size: 12px;
   color: var(--color-text-muted);
   font-weight: 500;
+}
+
+/* 聊天消息的轻量时间标签：跟随角色名下方，弱化为次要信息 */
+.msg-time {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
 }
 
 .user-section .agent-name {
